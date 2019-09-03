@@ -2,106 +2,140 @@
 
 const uuid = require('uuid');
 const AWS = require('aws-sdk');
+const {graphql, GraphQLSchema, GraphQLObjectType, GraphQLList, GraphQLNonNull, GraphQLString, GraphQLInt, GraphQLID} = require("graphql");
+const {GraphQLDateTime} = require('graphql-iso-date');
 
 AWS.config.setPromisesDependency(require('bluebird'));
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 
-module.exports.submit = (event, context, callback) => {
+const candidateType = new GraphQLObjectType({
+  name: "CandidateType",
+  fields: {
+    id: { type: new GraphQLNonNull(GraphQLString) },
+    fullname: { type: new GraphQLNonNull(GraphQLString) },
+    email: { type: new GraphQLNonNull(GraphQLString) },
+    experience: {type: new GraphQLNonNull(GraphQLInt)},
+    submittedAt: { type: new GraphQLNonNull(GraphQLDateTime) },
+    updatedAt: { type: new GraphQLNonNull(GraphQLDateTime) },
+  },
+});
 
-  const requestBody = JSON.parse(event.body);
-  const fullname = requestBody.fullname;
-  const email = requestBody.email;
-  const experience = requestBody.experience;
+const schema = new GraphQLSchema({
+  query: new GraphQLObjectType({
+    name: "Query",
+    fields: {
+      candidates: {
+        type: new GraphQLList(candidateType),
+        resolve: (parent) => {
+          return list();
+        },
+      },
+      candidate: {
+        args: {
+          id: { type: new GraphQLNonNull(GraphQLID) },
+        },
+        type: candidateType,
+        resolve: (parent, args) => {
+          console.log(view(args.id));
+          return view(args.id);
+        }
+      }
+    },
+  }),
+  mutation: new GraphQLObjectType({
+    name: "Mutation",
+    fields: {
+      registerCandidate: {
+        args: {
+          fullname: { type: new GraphQLNonNull(GraphQLString) },
+          email: { type: new GraphQLNonNull(GraphQLString) },
+          experience: { type: new GraphQLNonNull(GraphQLInt) },
+        },
+        type: candidateType,
+        resolve: (parent, args) => {
 
-  if (typeof fullname !== 'string' || typeof email !== 'string' || typeof experience !== 'number') {
-    console.error('Validation Failed');
-    callback(new Error('Couldn\'t submit candidate because of validation errors.'));
-    return;
+          const fullname = args.fullname;
+          const email = args.email;
+          const experience = args.experience;
+
+          if (typeof fullname !== 'string' || typeof email !== 'string' || typeof experience !== 'number') {
+            console.error('Validation Failed');
+            return new Error('Couldn\'t submit candidate because of validation errors.');
+          }
+
+          let candidate = register(fullname, email, experience);
+          return candidate;
+        },
+      }
+    },
+  })
+});
+
+module.exports.graphql = async (event, context, callback) => {
+  const parsedRequestBody = (event && event.body) ? JSON.parse(event.body) : {};
+
+  try {
+    const graphQLResult = await graphql(schema,
+    parsedRequestBody.query,
+    null,
+    null,
+    parsedRequestBody.variables,
+    parsedRequestBody.operationName);
+
+    // console.log(parsedRequestBody.query, graphQLResult);
+    return { statusCode: 200, body: JSON.stringify(graphQLResult) };
+  } catch (error) {
+    throw error;
   }
+}
 
-  submitCandidateP(candidateInfo(fullname, email, experience))
-    .then(res => {
-      callback(null, {
-        statusCode: 200,
-        body: JSON.stringify({
-          message: `Sucessfully submitted candidate with email ${email}`,
-          candidateId: res.id
-        })
-      });
-    })
-    .catch(err => {
-      console.log(err);
-      callback(null, {
-        statusCode: 500,
-        body: JSON.stringify({
-          message: `Unable to submit candidate with email ${email}`
-        })
-      })
-    });
-};
+const list = () => {
+  const params = {
+     TableName: process.env.CANDIDATE_TABLE,
+   };
 
+  return dynamoDb.scan(params).promise().then(data => {
+    return data.Items.map(item => ({
+        ...item,
+        submittedAt: new Date(item.submittedAt),
+        updatedAt: new Date(item.updatedAt)
+      }));
+  });
+}
 
-module.exports.list = (event, context, callback) => {
-  var params = {
-    TableName: process.env.CANDIDATE_TABLE,
-    ProjectionExpression: "id, fullname, email"
-  };
+const view = (id) => {
+  const params = {
+     TableName: process.env.CANDIDATE_TABLE,
+     Key: { id },
+   };
 
-  console.log("Scanning candidates table.");
-  const onScan = (err, data) => {
-    if(err) {
-      console.log("Scan failed to load data. Error JSON: ", JSON.stringify(err, null, 2));
-      callback(err)
-    } else {
-      console.log("Scan succeeded");
+   return dynamoDb.get(params).promise().then(result => {
 
-      return callback(null, {
-        statusCode: 200,
-        body: JSON.stringify({
-          candidates: data.Items
-        })
-      });
-    }
-  };
+     if(!result.Item) {
+       return null;
+     }
 
-  dynamoDb.scan(params, onScan);
-};
+     return {
+       ...result.Item,
+       submittedAt: new Date(result.Item.submittedAt),
+       updatedAt: new Date(result.Item.updatedAt),
+     };
+   });
+}
 
-
-module.exports.get = (event, context, callback) => {
-  var params = {
-    TableName: process.env.CANDIDATE_TABLE,
-    Key: {
-      id: event.pathParameters.id
-    }
-  };
-
-  dynamoDb.get(params).promise()
-    .then(result => {
-      const response = {
-        statusCode: 200,
-        body: JSON.stringify(result.Item),
-      };
-
-      callback(null, response);
-    })
-    .catch(error => {
-      console.log(error);
-      callback(new Error("Couldn't fetch candidate"));
-      return;
-    });
-};
-
-
-const submitCandidateP = candidate => {
-  console.log('Submitting candidate');
-  const candidateInfo = {
+const register = (fullname, email, experience) => {
+  const candidate = candidateInfo(fullname, email, experience);
+  const params = {
     TableName: process.env.CANDIDATE_TABLE,
     Item: candidate,
   };
-  return dynamoDb.put(candidateInfo).promise()
-    .then(res => candidate);
-};
+  return dynamoDb.put(params).promise()
+    .then(res => ({
+      ...candidate,
+      submittedAt: new Date(candidate.submittedAt),
+      updatedAt: new Date(candidate.updatedAt),
+    }));
+}
 
 const candidateInfo = (fullname, email, experience) => {
   const timestamp = new Date().getTime();

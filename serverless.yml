@@ -70,22 +70,10 @@ provider:
 #    - exclude-me-dir/**
 
 functions:
-  candidateSubmission:
-    handler: api/candidate.submit
-    memorySize: 128
-    description: Submit candidate information and starts interview process.
+  graphql:
+    handler: api/candidate.graphql
     events:
-      - http: POST candidates
-  listCandidates:
-    handler: api/candidate.list
-    memorySize: 128
-    description: List all candidates
-    events:
-      - http: GET candidates
-  candidateDetails:
-    handler: api/candidate.get
-    events:
-      - http: GET candidates/{id}
+      - http: POST graphql
   # hello:
   #   handler: handler.hello
   #   events:
