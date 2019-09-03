@@ -21,10 +21,10 @@ module.exports.list = () => {
   });
 }
 
-module.exports.view = (id) => {
+module.exports.view = (parent, args, context, info) => {
   const params = {
      TableName: process.env.CANDIDATE_TABLE,
-     Key: { id },
+     Key: { id: args.id },
    };
 
    return dynamoDb.get(params).promise().then(result => {
@@ -41,8 +41,8 @@ module.exports.view = (id) => {
    });
 }
 
-module.exports.register = (fullname, email, experience) => {
-  const candidate = candidateInfo(fullname, email, experience);
+module.exports.register = (parent, args, context, info) => {
+  const candidate = candidateInfo(args.fullname, args.email, args.experience);
   const params = {
     TableName: process.env.CANDIDATE_TABLE,
     Item: candidate,

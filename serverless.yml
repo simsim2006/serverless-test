@@ -72,9 +72,10 @@ plugins:
 
 functions:
   graphql:
-    handler: api/candidate.graphql
+    handler: graphql.graphqlHandler
     events:
       - http: POST graphql
+      - http: GET graphql
   # hello:
   #   handler: handler.hello
   #   events:
